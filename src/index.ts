@@ -1,9 +1,13 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import * as assert from 'assert'
+import { promisify } from 'util'
 import * as yaml from 'js-yaml'
-import { CheckpointTrie } from 'merkle-patricia-tree'
-import { TrieNode as MPTTrieNode, BranchNode } from 'merkle-patricia-tree/dist/trieNode'
+import { TrieNode as MPTTrieNode, BranchNode } from './trieNode'
+import VM from 'ethereumjs-vm'
+const Block = require('ethereumjs-block')
+const blockFromRPC = require('ethereumjs-block/from-rpc')
+const SecureTrie = require('merkle-patricia-tree/secure')
 
 export type TrieNode = MPTTrieNode | HashNode
 
@@ -15,7 +19,8 @@ export class HashNode {
   }
 }
 
-export async function buildFromWitness(trie: CheckpointTrie, witness: any): Promise<TrieNode | null> {
+export async function buildFromWitness(trie: any, witness: any): Promise<TrieNode | null> {
+  const put = promisify(trie._putRaw).bind(trie)
   // Empty children in branches are sent as an empty string
   if (typeof witness === 'string') {
     if (witness.length > 0) throw new Error('Invalid item in witness')
@@ -50,7 +55,7 @@ export async function buildFromWitness(trie: CheckpointTrie, witness: any): Prom
     if (branch.serialize().length < 32) {
       return branch
     } else {
-      await trie.db.put(branch.hash(), branch.serialize())
+      await put(branch.hash(), branch.serialize())
       return new HashNode(branch.hash())
     }
   } else if (witness.hasOwnProperty('hash')) {
@@ -69,12 +74,18 @@ export async function main() {
   assert(testCase.trees.length === 1, 'Only supporting one tree in witness')
   // TODO: Get expected root from testcase
   const expectedRoot = Buffer.from('d7f8974fb5ac78d9ac099b9ad5018bedc2ce0a72dad1827a1709da30580f0544', 'hex')
+  const rpcBlock = (JSON.parse(fs.readFileSync(path.join(__dirname, 'fixture/block1.json'), 'utf8'))).result
+  const block = blockFromRPC(rpcBlock)
 
-  const trie = new CheckpointTrie()
+  const trie = new SecureTrie()
   const rootNode = await buildFromWitness(trie, testCase.trees[0])
 
   assert(rootNode instanceof HashNode, 'buildFromWitness should return HashNode')
   assert((rootNode as HashNode)._hash.equals(expectedRoot), 'Should match expected root')
+  trie.root = expectedRoot
+
+  const vm = new VM({ state: trie, hardfork: 'byzantium' })
+  const res = await vm.runBlock({ block })
 }
 
 main().then().catch((err: Error) => { throw err })
