@@ -124,6 +124,8 @@ export async function buildLeaf(trie: any, fields: any, depth: number = 0, domai
     if (fields.length === 5) {
       const code = toBuffer(fields[3])
       account.codeHash = keccak256(code)
+      // Insert code in db
+      await put(account.codeHash, code)
 
       // Re-build contract's storage trie
       const storageNode = typeof fields[4] === 'string' ? ['hash', fields[4]] : fields[4]
